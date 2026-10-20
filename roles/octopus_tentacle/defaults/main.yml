@@ -20,6 +20,7 @@ tentacle_version_by_os_major:
   "7": "8.1.2007"   # newest Tentacle that runs on RHEL 7
   "8": "latest"
   "9": "latest"
+  "10": "latest"
 
 # Re-extract the archive even if the installed version already matches.
 tentacle_force_reinstall: false

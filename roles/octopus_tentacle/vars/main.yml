@@ -1,5 +1,5 @@
 ---
-_tentacle_supported_os_majors: ["7", "8", "9"]
+_tentacle_supported_os_majors: ["7", "8", "9", "10"]
 _tentacle_arch_map:
   x86_64: x64
   aarch64: arm64
@@ -8,3 +8,4 @@ _tentacle_semanage_package:
   "7": policycoreutils-python
   "8": policycoreutils-python-utils
   "9": policycoreutils-python-utils
+  "10": policycoreutils-python-utils

@@ -1,8 +1,8 @@
-# Octopus Tentacle Ansible role (non-root, RHEL 7/8/9)
+# Octopus Tentacle Ansible role (non-root, RHEL 7 to 10)
 
-This repo contains an Ansible role, `octopus_tentacle`, that installs an Octopus Deploy Listening Tentacle on RHEL 7, 8 or 9 so that it runs as an ordinary user instead of root. It follows the [rootless instance](https://octopus.com/docs/infrastructure/deployment-targets/tentacle/linux#rootless-instance-creation) approach from the Octopus docs, and you can optionally register the machine with your Octopus Server as a deployment target or a worker.
+This repo contains an Ansible role, `octopus_tentacle`, that installs an Octopus Deploy Listening Tentacle on RHEL 7, 8, 9 or 10 so that it runs as an ordinary user instead of root. It follows the [rootless instance](https://octopus.com/docs/infrastructure/deployment-targets/tentacle/linux#rootless-instance-creation) approach from the Octopus docs, and you can optionally register the machine with your Octopus Server as a deployment target or a worker.
 
-One role covers all three RHEL versions. It reads the host's major version and picks the Tentacle build to match: RHEL 7 gets 8.1.2007, the newest Tentacle known to run there, and RHEL 8 and 9 get whatever you set (the default is `latest`).
+One role covers all four RHEL versions. It reads the host's major version and picks the Tentacle build to match: RHEL 7 gets 8.1.2007, the newest Tentacle known to run there, and RHEL 8, 9 and 10 get whatever you set (the default is `latest`).
 
 It only uses modules that ship with `ansible-core`, so you don't need to install any collections. The same code runs from a laptop with the free `ansible-core` package or from Red Hat Ansible Automation Platform (AAP).
 
@@ -131,7 +131,7 @@ All settings are in `roles/octopus_tentacle/defaults/main.yml`, with comments.
 | `tentacle_user` | `octopus` | The account Tentacle runs as. Can't be root. |
 | `tentacle_create_user` | `true` | Set to `false` for an existing LDAP or AD account. |
 | `tentacle_version` | empty | Empty means use `tentacle_version_by_os_major`. Set it per host to pin a version. |
-| `tentacle_version_by_os_major` | 7: `8.1.2007`, 8/9: `latest` | Per-OS defaults. |
+| `tentacle_version_by_os_major` | 7: `8.1.2007`, 8 to 10: `latest` | Per-OS defaults. |
 | `tentacle_instance_name` | `default` | Use a different name and port for each extra instance on the same host. |
 | `tentacle_listen_port` | `10933` | |
 | `tentacle_server_thumbprint` | (required) | Thumbprint of the Octopus Server certificate. |
@@ -184,7 +184,7 @@ If you're not sure which to use, ask whoever manages DNS which of these the Octo
 - `ansible-lint` passes on the `production` profile.
 - **RHEL 7** with ansible-core 2.16 from macOS: a full install, registration as a deployment target and a green health check in Octopus. A rerun with a changed public hostname re-registered the existing machine in place. That host had no working package repos, so it used the `chcon` fallback for SELinux.
 - A local test run against a mock Tentacle binary covered the logic paths: version mismatch, a failed registration, worker registration, every public hostname source and the preflight checks.
-- **RHEL 8 and 9** haven't been tested on real hosts yet, and neither has the `semanage` path for SELinux.
+- **RHEL 8, 9 and 10** haven't been tested on real hosts yet, and neither has the `semanage` path for SELinux.
 
 ## Support
 
