@@ -177,7 +177,7 @@ If you're not sure which to use, ask whoever manages DNS which of these the Octo
 
 - Polling mode. The role installs Listening Tentacles only.
 - Uninstall. To remove an instance, stop and disable the unit, delete the unit file and delete `~/apps/octopus/instances/<instance>`.
-- Upgrades from the Octopus portal. The binaries live in a folder the service user owns, so a portal upgrade has a chance of working, but nobody has tested it with this layout.
+- Upgrades from the Octopus portal. These may not work with this layout, depending on the OS and Tentacle version, so they aren't supported here. To upgrade, pin the new version with `tentacle_version` and run the playbook again.
 
 ## What has been tested
 
