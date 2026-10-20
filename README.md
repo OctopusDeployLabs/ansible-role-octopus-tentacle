@@ -183,9 +183,8 @@ If you're not sure which to use, ask whoever manages DNS which of these the Octo
 
 - `ansible-lint` passes on the `production` profile.
 - **RHEL 7** with ansible-core 2.16 from macOS: a full install, registration as a deployment target and a green health check in Octopus. A rerun with a changed public hostname re-registered the existing machine in place. That host had no working package repos, so it used the `chcon` fallback for SELinux.
+- **RHEL 8, 9 and 10** with ansible-core 2.16 from macOS: a full install of Tentacle `latest` (12.2.4560 at the time), registration as a deployment target and a green health check in Octopus. SELinux used the persistent `semanage` rule. A second run reported `changed=0` on each.
 - A local test run against a mock Tentacle binary covered the logic paths: version mismatch, a failed registration, worker registration, every public hostname source and the preflight checks.
-- **RHEL 8 and 9** with ansible-core 2.16 from macOS: a full install of Tentacle `latest` (12.2.4560 at the time), registration as a deployment target and a green health check in Octopus. SELinux used the persistent `semanage` rule. A second run reported `changed=0` on both.
-- **RHEL 10** hasn't been tested on a real host yet.
 
 ## Support
 
