@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Octopus Deploy Tentacle ({{ tentacle_instance_name }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ tentacle_user }}
+Group={{ tentacle_group }}
+WorkingDirectory={{ _tentacle_instance_dir }}
+ExecStart={{ _tentacle_bin }} run --config "{{ _tentacle_config_file }}" --noninteractive
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,7 @@
+*.retry
+.ansible/
+__pycache__/
+# Local test inventories with real hosts or keys
+inventory/host_vars/
+*.local.yml
+.DS_Store

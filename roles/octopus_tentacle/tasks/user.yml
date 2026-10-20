@@ -1,0 +1,48 @@
+---
+- name: Create the service group
+  ansible.builtin.group:
+    name: "{{ tentacle_group }}"
+    system: true
+  when: tentacle_create_user | bool
+
+- name: Create the service user
+  ansible.builtin.user:
+    name: "{{ tentacle_user }}"
+    group: "{{ tentacle_group }}"
+    system: true
+    create_home: true
+    shell: "{{ tentacle_user_shell }}"
+    comment: Octopus Deploy Tentacle
+  when: tentacle_create_user | bool
+
+- name: Look up the service user
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ tentacle_user }}"
+
+- name: Work out paths
+  ansible.builtin.set_fact:
+    _tentacle_base_dir: "{{ _base }}"
+    _tentacle_install_dir: "{{ _base }}/tentacle"
+    _tentacle_bin: "{{ _base }}/tentacle/Tentacle"
+    _tentacle_download_dir: "{{ _base }}/downloads"
+    _tentacle_instance_dir: "{{ _base }}/instances/{{ tentacle_instance_name }}"
+    _tentacle_config_file: "{{ _base }}/instances/{{ tentacle_instance_name }}/Tentacle.config"
+    _tentacle_app_dir: "{{ tentacle_app_dir if tentacle_app_dir | length > 0 else _base ~ '/applications/' ~ tentacle_instance_name }}"
+  vars:
+    _home: "{{ getent_passwd[tentacle_user][4] }}"
+    _base: "{{ tentacle_base_dir if tentacle_base_dir | length > 0 else _home ~ '/apps/octopus' }}"
+
+- name: Create Tentacle directories owned by the service user
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ tentacle_user }}"
+    group: "{{ tentacle_group }}"
+    mode: "0750"
+  loop:
+    - "{{ _tentacle_base_dir }}"
+    - "{{ _tentacle_download_dir }}"
+    - "{{ _tentacle_base_dir }}/instances"
+    - "{{ _tentacle_instance_dir }}"
+    - "{{ _tentacle_app_dir }}"

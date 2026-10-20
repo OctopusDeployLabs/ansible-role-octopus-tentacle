@@ -1,0 +1,7 @@
+---
+profile: production
+skip_list:
+  # Public variables use the shorter tentacle_ prefix instead of octopus_tentacle_.
+  - var-naming[no-role-prefix]
+exclude_paths:
+  - .ansible/

@@ -1,0 +1,6 @@
+---
+- name: Install Octopus Tentacle as a non-root service
+  hosts: tentacles
+  gather_facts: true
+  roles:
+    - role: octopus_tentacle

@@ -1,0 +1,31 @@
+---
+- name: Write the systemd unit
+  ansible.builtin.template:
+    src: octopus-tentacle.service.j2
+    dest: "/etc/systemd/system/{{ tentacle_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart tentacle
+
+- name: Enable and start Tentacle
+  ansible.builtin.systemd:
+    name: "{{ tentacle_service_name }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Wait for Tentacle to listen
+  ansible.builtin.wait_for:
+    port: "{{ tentacle_listen_port }}"
+    timeout: 60
+
+- name: Read the service state
+  ansible.builtin.command:
+    argv: [systemctl, show, "{{ tentacle_service_name }}", --property=User, --property=ActiveState, --property=MainPID]
+  register: _tentacle_unit_state
+  changed_when: false
+
+- name: Report the service state
+  ansible.builtin.debug:
+    msg: "{{ tentacle_service_name }}: {{ _tentacle_unit_state.stdout_lines | join(', ') }}"

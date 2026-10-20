@@ -1,0 +1,16 @@
+---
+- name: Restart tentacle
+  ansible.builtin.systemd:
+    name: "{{ tentacle_service_name }}"
+    state: restarted
+    daemon_reload: true
+  become: true
+  when: tentacle_manage_service | bool
+  listen: Restart tentacle
+
+- name: Wait for tentacle after restart
+  ansible.builtin.wait_for:
+    port: "{{ tentacle_listen_port }}"
+    timeout: 60
+  when: tentacle_manage_service | bool
+  listen: Restart tentacle

@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  role_name: octopus_tentacle
+  namespace: octopusdeploy
+  author: Octopus Deploy
+  description: Experimental role that installs an Octopus Deploy Listening Tentacle as a non-root systemd service on RHEL 7, 8 and 9.
+  license: Apache-2.0
+  min_ansible_version: "2.16"
+  platforms:
+    - name: EL
+      versions: ["7", "8", "9"]
+dependencies: []

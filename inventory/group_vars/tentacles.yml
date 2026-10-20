@@ -1,0 +1,22 @@
+---
+# Service account Tentacle runs as
+tentacle_user: octopus
+
+# Instance
+tentacle_instance_name: default
+tentacle_listen_port: 10933
+tentacle_server_thumbprint: "REPLACE-WITH-SERVER-THUMBPRINT"
+
+# Registration. Leave tentacle_api_key empty to install without registering.
+# For a quick test you can put the key here, or pass it on the command line:
+#   ansible-playbook site.yml -e tentacle_api_key=API-XXXX
+# Don't commit a real key to source control.
+tentacle_server_url: "https://your-octopus-url"
+tentacle_api_key: ""
+tentacle_space: Default
+tentacle_registration_type: target
+tentacle_environments: [Test]
+tentacle_roles: [rhel-demo]
+
+# Set to true if firewalld runs on the hosts and nobody else manages it
+tentacle_manage_firewall: false

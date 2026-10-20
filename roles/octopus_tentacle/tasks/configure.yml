@@ -1,0 +1,82 @@
+---
+# Rootless instance: no --instance argument, so Tentacle writes Tentacle.config
+# into the working directory and never touches /etc/octopus.
+# See https://octopus.com/docs/infrastructure/deployment-targets/tentacle/linux#rootless-instance-creation
+- name: Create the rootless instance
+  ansible.builtin.command:
+    argv: ["{{ _tentacle_bin }}", create-instance]
+    chdir: "{{ _tentacle_instance_dir }}"
+    creates: "{{ _tentacle_config_file }}"
+  become: true
+  become_user: "{{ tentacle_user }}"
+  notify: Restart tentacle
+
+- name: Generate a certificate if there is none
+  ansible.builtin.command:
+    argv: ["{{ _tentacle_bin }}", new-certificate, --if-blank]
+    chdir: "{{ _tentacle_instance_dir }}"
+  become: true
+  become_user: "{{ tentacle_user }}"
+  changed_when: false
+
+# The configure commands are not idempotent on their own (--reset-trust wipes
+# trust), so the role stores a fingerprint of the settings and only reruns
+# them when something changes.
+- name: Build the configuration fingerprint
+  ansible.builtin.set_fact:
+    _tentacle_config_fingerprint: >-
+      {{ {'port': tentacle_listen_port | string,
+          'app': _tentacle_app_dir,
+          'thumbprint': tentacle_server_thumbprint | upper} | to_json | hash('sha1') }}
+    _tentacle_config_stamp: "{{ _tentacle_instance_dir }}/.ansible-config-fingerprint"
+
+- name: Read the stored fingerprint
+  ansible.builtin.slurp:
+    src: "{{ _tentacle_config_stamp }}"
+  register: _tentacle_config_stamp_content
+  failed_when: false
+
+- name: Apply port, application path and trust
+  when: (_tentacle_config_stamp_content.content | default('') | b64decode | trim) != _tentacle_config_fingerprint
+  block:
+    - name: Configure listening port and application directory
+      ansible.builtin.command:
+        argv:
+          - "{{ _tentacle_bin }}"
+          - configure
+          - --port
+          - "{{ tentacle_listen_port }}"
+          - --noListen
+          - "False"
+          - --reset-trust
+          - --app
+          - "{{ _tentacle_app_dir }}"
+        chdir: "{{ _tentacle_instance_dir }}"
+      become: true
+      become_user: "{{ tentacle_user }}"
+      changed_when: true
+      notify: Restart tentacle
+
+    - name: Trust the Octopus Server
+      ansible.builtin.command:
+        argv: ["{{ _tentacle_bin }}", configure, --trust, "{{ tentacle_server_thumbprint }}"]
+        chdir: "{{ _tentacle_instance_dir }}"
+      become: true
+      become_user: "{{ tentacle_user }}"
+      changed_when: true
+      notify: Restart tentacle
+
+    - name: Store the fingerprint
+      ansible.builtin.copy:
+        content: "{{ _tentacle_config_fingerprint }}\n"
+        dest: "{{ _tentacle_config_stamp }}"
+        owner: "{{ tentacle_user }}"
+        group: "{{ tentacle_group }}"
+        mode: "0640"
+
+- name: Lock down Tentacle.config (it holds the private key)
+  ansible.builtin.file:
+    path: "{{ _tentacle_config_file }}"
+    owner: "{{ tentacle_user }}"
+    group: "{{ tentacle_group }}"
+    mode: "0600"

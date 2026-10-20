@@ -1,0 +1,27 @@
+---
+- name: Check whether firewalld is running
+  ansible.builtin.command: firewall-cmd --state
+  register: _tentacle_firewalld
+  changed_when: false
+  failed_when: false
+
+- name: Open the listening port
+  when: _tentacle_firewalld.rc == 0
+  block:
+    - name: Check the permanent rule
+      ansible.builtin.command:
+        argv: [firewall-cmd, --permanent, "--query-port={{ tentacle_listen_port }}/tcp"]
+      register: _tentacle_port_query
+      changed_when: false
+      failed_when: false
+
+    - name: Add the port permanently
+      ansible.builtin.command:
+        argv: [firewall-cmd, --permanent, "--add-port={{ tentacle_listen_port }}/tcp"]
+      when: _tentacle_port_query.rc != 0
+      changed_when: true
+
+    - name: Reload firewalld
+      ansible.builtin.command: firewall-cmd --reload
+      when: _tentacle_port_query.rc != 0
+      changed_when: true

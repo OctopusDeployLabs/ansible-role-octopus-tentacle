@@ -1,0 +1,107 @@
+---
+# ---------------------------------------------------------------------------
+# Service account. Tentacle runs as this user, never as root.
+# ---------------------------------------------------------------------------
+tentacle_user: octopus
+tentacle_group: "{{ tentacle_user }}"
+# Set to false if the account already exists (for example an LDAP/AD account).
+tentacle_create_user: true
+tentacle_user_shell: /bin/bash
+
+# ---------------------------------------------------------------------------
+# Tentacle version.
+# Leave tentacle_version empty to pick the version for the host's RHEL major
+# version from tentacle_version_by_os_major. Set it to override for a host.
+# "latest" downloads the current release, but it only installs when Tentacle is
+# missing. Pin a real version number if you want Ansible to manage upgrades.
+# ---------------------------------------------------------------------------
+tentacle_version: ""
+tentacle_version_by_os_major:
+  "7": "8.1.2007"   # newest Tentacle that runs on RHEL 7
+  "8": "latest"
+  "9": "latest"
+
+# Re-extract the archive even if the installed version already matches.
+tentacle_force_reinstall: false
+
+# Download source. The role fills in {version} and {arch}. This path works
+# for both 8.1.2007 (RHEL 7) and 9.2.3995 builds.
+tentacle_download_url_template: "https://download.octopusdeploy.com/linux-tentacle/tentacle-{version}-linux_{arch}.tar.gz"
+tentacle_download_url_latest: "https://octopus.com/downloads/latest/Linux_{arch}TarGz/OctopusTentacle"
+# Set to a full URL to use an internal mirror (Artifactory, Nexus, Satellite).
+tentacle_download_url: ""
+# Or set to a .tar.gz path on the Ansible controller to push it from there
+# (for hosts with no internet access).
+tentacle_archive_local_path: ""
+
+# ---------------------------------------------------------------------------
+# Paths. Empty means "derive from the service user's home directory":
+#   <home>/apps/octopus/tentacle                 binaries
+#   <home>/apps/octopus/instances/<instance>     Tentacle.config (rootless)
+#   <home>/apps/octopus/applications/<instance>  deployed packages
+# ---------------------------------------------------------------------------
+tentacle_base_dir: ""
+tentacle_app_dir: ""
+
+# ---------------------------------------------------------------------------
+# Instance (Listening mode).
+# ---------------------------------------------------------------------------
+tentacle_instance_name: default
+tentacle_listen_port: 10933
+# Thumbprint of the Octopus Server certificate. Required: a listening Tentacle
+# only accepts connections from servers it trusts.
+tentacle_server_thumbprint: ""
+
+# ---------------------------------------------------------------------------
+# Registration with Octopus Server (optional).
+# Registration runs when tentacle_register is true and URL + API key are set.
+# The API key can be plain text here, an extra var (-e), Ansible Vault, or an
+# AAP custom credential. All of these end up in this one variable.
+# ---------------------------------------------------------------------------
+tentacle_register: true
+tentacle_server_url: ""
+tentacle_api_key: ""
+tentacle_space: Default
+# "target" (deployment target) or "worker"
+tentacle_registration_type: target
+tentacle_machine_name: "{{ ansible_hostname }}"
+# Address the Octopus Server uses to reach this machine.
+# Set tentacle_public_hostname to force a value (usually per host).
+# Otherwise the role picks one using tentacle_public_hostname_source:
+#   auto          FQDN if the host reports a dotted name, else its primary IPv4 address
+#   fqdn          what the host reports as its fully qualified name
+#   hostname      short hostname, plus tentacle_public_hostname_suffix if set
+#   inventory     the host's name in the Ansible inventory, plus the suffix
+#   ansible_host  the address Ansible itself connected to
+#   ip            the host's primary IPv4 address (no DNS needed)
+tentacle_public_hostname: ""
+tentacle_public_hostname_source: auto
+# For example ".corp.example.com" with the hostname or inventory source.
+tentacle_public_hostname_suffix: ""
+tentacle_environments: []
+tentacle_roles: []
+tentacle_tenants: []
+tentacle_tenant_tags: []
+# Untenanted, Tenanted or TenantedOrUntenanted. Empty leaves the server default.
+tentacle_tenanted_deployment_participation: ""
+tentacle_worker_pools: []
+tentacle_machine_policy: ""
+# Register again even if the settings have not changed.
+tentacle_force_register: false
+
+# ---------------------------------------------------------------------------
+# Host setup done as root.
+# ---------------------------------------------------------------------------
+tentacle_install_dependencies: true
+tentacle_dependency_packages:
+  - tar
+  - gzip
+  - libicu
+  - krb5-libs
+  - openssl-libs
+  - zlib
+  - libstdc++
+tentacle_manage_selinux: true
+tentacle_manage_firewall: false
+tentacle_manage_service: true
+tentacle_service_name: "octopus-tentacle-{{ tentacle_instance_name }}"

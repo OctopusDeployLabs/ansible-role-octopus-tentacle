@@ -1,0 +1,104 @@
+---
+- name: Install dependency packages
+  ansible.builtin.package:
+    name: "{{ tentacle_dependency_packages }}"
+    state: present
+  when: tentacle_install_dependencies | bool
+
+- name: Check for an existing Tentacle binary
+  ansible.builtin.stat:
+    path: "{{ _tentacle_bin }}"
+  register: _tentacle_bin_stat
+
+- name: Read the installed Tentacle version
+  ansible.builtin.command:
+    argv: ["{{ _tentacle_bin }}", "version"]
+  become: true
+  become_user: "{{ tentacle_user }}"
+  register: _tentacle_installed_version
+  changed_when: false
+  failed_when: false
+  when: _tentacle_bin_stat.stat.exists
+
+- name: Decide whether to install
+  ansible.builtin.set_fact:
+    _tentacle_install_required: >-
+      {{ (not _tentacle_bin_stat.stat.exists)
+         or (tentacle_force_reinstall | bool)
+         or (_tentacle_version != 'latest'
+             and _tentacle_version not in (_tentacle_installed_version.stdout | default(''))) }}
+    _tentacle_archive: "{{ _tentacle_download_dir }}/tentacle-{{ _tentacle_version }}-linux_{{ _tentacle_arch }}.tar.gz"
+    _tentacle_url: >-
+      {{ tentacle_download_url if tentacle_download_url | length > 0
+         else (tentacle_download_url_latest if _tentacle_version == 'latest'
+               else tentacle_download_url_template) | replace('{version}', _tentacle_version) | replace('{arch}', _tentacle_arch) }}
+
+- name: Show install decision
+  ansible.builtin.debug:
+    msg: >-
+      Installed: {{ (_tentacle_installed_version.stdout | default('none')) | trim }}.
+      Wanted: {{ _tentacle_version }}.
+      {{ 'Installing.' if _tentacle_install_required | bool else 'Nothing to do.' }}
+
+- name: Install or upgrade Tentacle
+  when: _tentacle_install_required | bool
+  block:
+    - name: Download Tentacle archive
+      ansible.builtin.get_url:
+        url: "{{ _tentacle_url | trim }}"
+        dest: "{{ _tentacle_archive }}"
+        owner: "{{ tentacle_user }}"
+        group: "{{ tentacle_group }}"
+        mode: "0640"
+        force: "{{ _tentacle_version == 'latest' }}"
+        timeout: 120
+      when: tentacle_archive_local_path | length == 0
+
+    - name: Copy Tentacle archive from the controller
+      ansible.builtin.copy:
+        src: "{{ tentacle_archive_local_path }}"
+        dest: "{{ _tentacle_archive }}"
+        owner: "{{ tentacle_user }}"
+        group: "{{ tentacle_group }}"
+        mode: "0640"
+      when: tentacle_archive_local_path | length > 0
+
+    - name: Check whether the service unit exists
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/{{ tentacle_service_name }}.service"
+      register: _tentacle_unit_stat
+
+    - name: Stop Tentacle before upgrading
+      ansible.builtin.systemd:
+        name: "{{ tentacle_service_name }}"
+        state: stopped
+      when:
+        - tentacle_manage_service | bool
+        - _tentacle_unit_stat.stat.exists
+
+    - name: Extract Tentacle
+      ansible.builtin.unarchive:
+        src: "{{ _tentacle_archive }}"
+        dest: "{{ _tentacle_base_dir }}"
+        remote_src: true
+        owner: "{{ tentacle_user }}"
+        group: "{{ tentacle_group }}"
+      notify: Restart tentacle
+
+    - name: Confirm the new binary runs
+      ansible.builtin.command:
+        argv: ["{{ _tentacle_bin }}", "version"]
+      become: true
+      become_user: "{{ tentacle_user }}"
+      register: _tentacle_new_version
+      changed_when: false
+
+    - name: Check the expected version is now installed
+      ansible.builtin.assert:
+        that: _tentacle_version == 'latest' or _tentacle_version in _tentacle_new_version.stdout
+        fail_msg: "Wanted Tentacle {{ _tentacle_version }} but the binary reports {{ _tentacle_new_version.stdout | trim }}."
+        quiet: true
+
+    - name: Show the installed version
+      ansible.builtin.debug:
+        msg: "Tentacle {{ _tentacle_new_version.stdout | trim }} installed in {{ _tentacle_install_dir }}"

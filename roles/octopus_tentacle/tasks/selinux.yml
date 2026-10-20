@@ -1,0 +1,82 @@
+---
+# Files under /home get the user_home_t label, and systemd will not execute
+# them. Labelling the binary bin_t fixes that.
+#
+# Preferred: a semanage rule, which survives relabels and upgrades.
+# Fallback when semanage is missing and cannot be installed (for example a
+# host with no package repos): chcon, which the role re-applies on every run.
+- name: Check whether SELinux is on
+  ansible.builtin.command: getenforce
+  register: _tentacle_getenforce
+  changed_when: false
+  failed_when: false
+
+- name: Record the SELinux state
+  ansible.builtin.set_fact:
+    _tentacle_selinux_on: "{{ _tentacle_getenforce.rc == 0 and _tentacle_getenforce.stdout | trim in ['Enforcing', 'Permissive'] }}"
+
+- name: Label the Tentacle binary bin_t
+  when: _tentacle_selinux_on | bool
+  block:
+    - name: Check for semanage
+      ansible.builtin.stat:
+        path: /usr/sbin/semanage
+      register: _tentacle_semanage_stat
+
+    - name: Try to install semanage
+      ansible.builtin.package:
+        name: "{{ _tentacle_semanage_package[ansible_distribution_major_version | string] }}"
+        state: present
+      failed_when: false
+      when: not _tentacle_semanage_stat.stat.exists
+
+    - name: Check for semanage again
+      ansible.builtin.stat:
+        path: /usr/sbin/semanage
+      register: _tentacle_semanage_stat2
+
+    - name: Record whether semanage is usable
+      ansible.builtin.set_fact:
+        _tentacle_has_semanage: "{{ _tentacle_semanage_stat2.stat.exists }}"
+
+    - name: Persistent label with semanage
+      when: _tentacle_has_semanage | bool
+      block:
+        - name: Read local file-context rules
+          ansible.builtin.command: semanage fcontext -l -C
+          register: _tentacle_fcontext
+          changed_when: false
+
+        - name: Add a persistent bin_t rule for the binary
+          ansible.builtin.command:
+            argv: [semanage, fcontext, -a, -t, bin_t, "{{ _tentacle_bin }}"]
+          when: _tentacle_bin not in _tentacle_fcontext.stdout
+          changed_when: true
+
+        - name: Apply the label
+          ansible.builtin.command:
+            argv: [restorecon, -v, "{{ _tentacle_bin }}"]
+          register: _tentacle_restorecon
+          changed_when: _tentacle_restorecon.stdout | length > 0
+
+    - name: Fallback label with chcon
+      when: not _tentacle_has_semanage | bool
+      block:
+        - name: Warn that the label is not persistent
+          ansible.builtin.debug:
+            msg: >-
+              semanage is not available ({{ _tentacle_semanage_package[ansible_distribution_major_version | string] }}
+              could not be installed). Using chcon instead. The label survives reboots and Ansible re-applies it
+              on every run, but a full filesystem relabel would reset it.
+
+        - name: Read the current label
+          ansible.builtin.command:
+            argv: [stat, -c, "%C", "{{ _tentacle_bin }}"]
+          register: _tentacle_current_label
+          changed_when: false
+
+        - name: Set the label with chcon
+          ansible.builtin.command:
+            argv: [chcon, -t, bin_t, "{{ _tentacle_bin }}"]
+          when: "':bin_t:' not in _tentacle_current_label.stdout"
+          changed_when: true
