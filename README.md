@@ -16,7 +16,7 @@ Ansible connects as an admin user and uses sudo for the parts that need root:
 1. Creates the service account (`octopus` by default), unless you say it already exists.
 2. Installs the packages Tentacle needs.
 3. Downloads and extracts Tentacle into the service user's home: `~/apps/octopus/tentacle`.
-4. Labels the binary `bin_t` for SELinux. Files in `/home` are `user_home_t` by default, and systemd refuses to execute them. The role uses a persistent `semanage` rule, and falls back to `chcon` (re-applied on every run) on hosts where `semanage` can't be installed.
+4. Tells SELinux that the Tentacle binary is a program systemd may run. SELinux gives every file a type. Files under `/home` get the type `user_home_t`, meaning personal files, and SELinux won't let systemd start a program with that type. The role changes the binary's type to `bin_t`, the type that programs in `/usr/bin` have. It does this with a permanent `semanage` rule, or with `chcon` on hosts where `semanage` can't be installed. A `chcon` change can be undone by a full SELinux relabel, so the role re-applies it on every run.
 5. Writes `/etc/systemd/system/octopus-tentacle-<instance>.service` with `User=octopus`, then enables and starts it.
 
 Every Tentacle command (`create-instance`, `new-certificate`, `configure`, `register-with`) runs as the service user. The config file, certificate and deployed applications all belong to that user, and `/etc/octopus` is never touched.
