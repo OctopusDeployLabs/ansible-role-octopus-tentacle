@@ -234,6 +234,27 @@ The Octopus docs list Windows Server 2012 to 2025 for Tentacle. ansible-core onl
 
 Ansible manages Windows through the built-in Windows PowerShell 5.1, so the role needs nothing else on the host. PowerShell 7 isn't required. If your deployment steps use it, set `tentacle_windows_install_pwsh: true` and the role installs it from `tentacle_windows_pwsh_msi_url`.
 
+### How Windows hosts fit into the inventory
+
+`inventory/hosts.ini` puts Windows hosts in their own group, `windows_tentacles`, and makes that group part of `tentacles`:
+
+```ini
+[windows_tentacles]
+win-app01 ansible_host=win-app01.corp.example.com ansible_user=Administrator
+
+[tentacles:children]
+windows_tentacles
+```
+
+The `[tentacles:children]` block matters for two reasons:
+
+- `site.yml` runs against `hosts: tentacles`. Without the block, the playbook skips Windows hosts.
+- Windows hosts pick up the shared settings in `group_vars/tentacles.yml` (server URL, thumbprint, space, environments, roles and public hostname rules), so you don't repeat them.
+
+Windows-only settings, such as the WinRM connection details and the service account password, go in `group_vars/windows_tentacles.yml`. Ansible applies the subgroup's file on top of the shared one, so its values win when both set the same thing. Linux hosts aren't in `windows_tentacles` and never see those settings.
+
+Use `--limit windows_tentacles` to run only the Windows hosts. Leave it off to run everything.
+
 ### Testing a Windows host from a Mac
 
 Use the same virtual environment as for the Linux hosts, then:
