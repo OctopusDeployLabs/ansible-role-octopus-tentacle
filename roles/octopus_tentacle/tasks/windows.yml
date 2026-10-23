@@ -1,0 +1,37 @@
+---
+# Windows hosts. Ansible connects as an administrator (WinRM or SSH), so no
+# "become" is needed. The Tentacle service itself runs as tentacle_user, a
+# non-admin account with only the rights listed in
+# https://octopus.com/docs/infrastructure/deployment-targets/tentacle/windows/tentacle-permissions
+- name: Preflight checks and derived settings
+  ansible.builtin.import_tasks: windows/preflight.yml
+
+- name: Service account
+  ansible.builtin.import_tasks: windows/account.yml
+
+- name: Other Tentacle instances on this host
+  ansible.builtin.import_tasks: windows/conflicts.yml
+
+- name: PowerShell 7
+  ansible.builtin.import_tasks: windows/pwsh.yml
+  when: tentacle_windows_install_pwsh | bool
+
+- name: Tentacle MSI
+  ansible.builtin.import_tasks: windows/install.yml
+
+- name: Tentacle instance
+  ansible.builtin.import_tasks: windows/configure.yml
+
+- name: Permissions for the service account
+  ansible.builtin.import_tasks: windows/permissions.yml
+
+- name: Registration with Octopus Server
+  ansible.builtin.import_tasks: windows/register.yml
+
+- name: Firewall
+  ansible.builtin.import_tasks: windows/firewall.yml
+  when: tentacle_manage_firewall | bool
+
+- name: Windows service
+  ansible.builtin.import_tasks: windows/service.yml
+  when: tentacle_manage_service | bool

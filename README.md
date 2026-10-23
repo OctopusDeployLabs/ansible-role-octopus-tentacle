@@ -1,10 +1,12 @@
-# Octopus Tentacle Ansible role (non-root, RHEL 7 to 10)
+# Octopus Tentacle Ansible role (non-root, RHEL 7 to 10 and Windows Server)
 
 This repo contains an Ansible role, `octopus_tentacle`, that installs an Octopus Deploy Listening Tentacle on RHEL 7, 8, 9 or 10 so that it runs as an ordinary user instead of root. It follows the [rootless instance](https://octopus.com/docs/infrastructure/deployment-targets/tentacle/linux#rootless-instance-creation) approach from the Octopus docs, and you can optionally register the machine with your Octopus Server as a deployment target or a worker.
 
+The same role also installs Tentacle on Windows Server, running the Windows service as a local non-admin account. See [Windows hosts](#windows-hosts).
+
 One role covers all four RHEL versions. It reads the host's major version and picks the Tentacle build to match: RHEL 7 gets 8.1.2007, the newest Tentacle known to run there, and RHEL 8, 9 and 10 get whatever you set (the default is `latest`).
 
-It only uses modules that ship with `ansible-core`, so you don't need to install any collections. The same code runs from a laptop with the free `ansible-core` package or from Red Hat Ansible Automation Platform (AAP).
+On Linux it only uses modules that ship with `ansible-core`, so Linux-only users don't need any collections. Windows hosts need the `ansible.windows` collection (see [Windows hosts](#windows-hosts)). The same code runs from a laptop with the free `ansible-core` package or from Red Hat Ansible Automation Platform (AAP).
 
 > [!WARNING]
 > This project is experimental and is not an official Octopus Deploy product. Octopus Support can't help with problems you hit while using it. If something goes wrong, please raise an [issue](https://github.com/OctopusDeployLabs/ansible-role-octopus-tentacle/issues) instead (see [Support](#support)).
@@ -38,9 +40,12 @@ ansible.cfg                     turns on SSH pipelining (needed, see below)
 site.yml                        example playbook
 inventory/hosts.ini             example inventory
 inventory/group_vars/tentacles.yml   example settings
+inventory/group_vars/windows_tentacles.yml   example Windows connection settings
+collections/requirements.yml    the ansible.windows collection, for Windows hosts
 roles/octopus_tentacle/
   defaults/main.yml             every setting with comments
-  tasks/                        preflight, user, install, selinux, configure, register, firewall, service
+  tasks/linux.yml               Linux: preflight, user, install, selinux, configure, register, firewall, service
+  tasks/windows.yml             Windows: tasks/windows/*.yml
   templates/octopus-tentacle.service.j2
 ```
 
@@ -166,6 +171,117 @@ The role prints the address it chose on every run. If you change the address lat
 
 If you're not sure which to use, ask whoever manages DNS which of these the Octopus Server can resolve.
 
+## Windows hosts
+
+The role detects Windows hosts and runs a separate set of tasks for them. Shared settings work the same way on both: `tentacle_user`, `tentacle_listen_port`, `tentacle_server_thumbprint`, the registration settings and the public hostname settings.
+
+### What it does on each Windows host
+
+Ansible connects as an administrator over WinRM or SSH. It doesn't use sudo or `become` on Windows.
+
+1. Creates a local account (`octopus` by default) unless `tentacle_create_user` is `false`. The account isn't added to any admin group, and the role warns if it finds the account in Administrators.
+2. Optionally installs PowerShell 7 (`tentacle_windows_install_pwsh: true`).
+3. Downloads the Tentacle MSI and installs it into `C:\Program Files\Octopus Deploy\Tentacle`.
+4. Creates a named instance (`Tentacle` by default) with its home folder at `C:\Octopus`, and sets the port, application folder and trust.
+5. Grants the service account the rights from the Octopus [Tentacle permissions](https://octopus.com/docs/infrastructure/deployment-targets/tentacle/windows/tentacle-permissions) and [specific user account](https://octopus.com/docs/infrastructure/deployment-targets/tentacle/windows/running-tentacle-under-a-specific-user-account) pages:
+   - **Log on as a service.**
+   - **Full control of the home folder** (`C:\Octopus`), where Tentacle keeps its config, logs and temporary data.
+   - **Read access to `HKLM\Software\Octopus\Tentacle`**, which tells Tentacle where its config lives.
+   - **Read access to the certificate's private key**, but only if the certificate is in the Local Machine certificate store. If Tentacle keeps it in `Tentacle.config`, this step does nothing.
+   - **Start, stop and query rights on its own service.**
+6. Registers the machine, if a server URL and API key are set.
+7. Installs the Windows service, sets it to run as the service account, and starts it.
+
+Your deployments may need more rights than these, for example to change IIS or connect to SQL Server. Grant those separately.
+
+### Which Tentacle build
+
+Tentacle for Windows comes in two builds. Pick one with `tentacle_windows_flavour`:
+
+| Value | MSI | Needs |
+|---|---|---|
+| `net8` (default) | `Octopus.Tentacle.<version>-net8.0-windows-win-x64.msi` | Nothing extra |
+| `netfx` | `Octopus.Tentacle.<version>-x64.msi` | .NET Framework 4.8 or later. The role checks this and stops if it's missing. |
+
+The role checks which build is already installed before it changes anything. The modern .NET build ships its own runtime (`coreclr.dll` in the Tentacle folder) and the .NET Framework build doesn't. If the installed build doesn't match `tentacle_windows_flavour`, the role stops and says which build it found. It never switches builds on its own, because on a server with several instances that would change the runtime under all of them.
+
+To switch a host to the other build, uninstall the Tentacle program first (Apps & Features, or `Win32_Product`), then run the role with the new `tentacle_windows_flavour`. The instance, its home folder, the service account and the Octopus registration all stay in place.
+
+When Octopus ships a build for a newer .NET version, add it to `tentacle_windows_msi_url_templates` under a new name (for example `net10`) and set `tentacle_windows_flavour` to that name. The role treats every modern .NET build as one family, so moving from `net8` to a newer one is an ordinary upgrade and the build check doesn't block it.
+
+`tentacle_windows_version` defaults to `12.3.4629`. As on Linux, a pinned version lets the role handle upgrades. `latest` uses the Octopus download permalink and only installs when Tentacle is missing.
+
+### Adding an instance to a server that already runs Tentacle
+
+Tentacle supports several instances on one server, and the role can add one alongside an existing instance without touching it. Give the new instance its own values for these four settings:
+
+| Setting | Example | Why |
+|---|---|---|
+| `tentacle_windows_instance_name` | `Ansible` | The default, `Tentacle`, is usually the existing instance. |
+| `tentacle_windows_home_dir` | `C:\OctopusAnsible` | The role reuses any `Tentacle.config` it finds in this folder, so sharing a folder would reconfigure the existing instance. |
+| `tentacle_listen_port` | `10934` | The existing instance usually listens on 10933. |
+| `tentacle_machine_name` | `<host>-ansible` | Registration uses `--force`, which overwrites a machine with the same name in that space. |
+
+All instances share the same Tentacle program files, so an upgrade affects all of them. When the role finds other instances, it lists them and stops rather than install a different version. Set `tentacle_windows_version` (and `tentacle_windows_flavour`) to match what's installed, or set `tentacle_windows_allow_shared_upgrade: true` to upgrade all instances on purpose. The role also stops if something else is already listening on `tentacle_listen_port`.
+
+When you pass Windows paths with `-e` from a Mac or Linux shell, quote them (`-e 'tentacle_windows_home_dir=C:\OctopusAnsible'`). Unquoted, the shell removes the backslash, and the role stops with a message saying the path isn't a full path.
+
+### Windows versions
+
+The Octopus docs list Windows Server 2012 to 2025 for Tentacle. ansible-core only supports Windows versions that Microsoft still supports, which leaves Windows Server 2016, 2019, 2022 and 2025. The role warns if it finds anything older than 2016.
+
+### PowerShell
+
+Ansible manages Windows through the built-in Windows PowerShell 5.1, so the role needs nothing else on the host. PowerShell 7 isn't required. If your deployment steps use it, set `tentacle_windows_install_pwsh: true` and the role installs it from `tentacle_windows_pwsh_msi_url`.
+
+### Testing a Windows host from a Mac
+
+Use the same virtual environment as for the Linux hosts, then:
+
+```bash
+pip install pywinrm
+ansible-galaxy collection install -r collections/requirements.yml
+```
+
+Add the host under `[windows_tentacles]` in `inventory/hosts.ini`. To connect with a domain account, write `ansible_user` as a UPN (`administrator@corp.example.com`) or double the backslash (`CORP\\Administrator`), because the INI format drops a single backslash. The connection settings in `inventory/group_vars/windows_tentacles.yml` use WinRM on port 5985 with NTLM. Then check Ansible can connect (`-k` prompts for the Windows password):
+
+```bash
+ansible windows_tentacles -m ansible.windows.win_ping -k
+```
+
+Run the playbook, passing the password for the new service account and your API key:
+
+```bash
+ansible-playbook site.yml -k --limit windows_tentacles \
+  -e tentacle_windows_service_password='A-Strong-Passw0rd!' \
+  -e tentacle_api_key=API-XXXXXXXXXXXX
+```
+
+Check the result on the host. `StartName` should be `.\octopus`, not `LocalSystem`:
+
+```powershell
+Get-CimInstance Win32_Service | Where-Object PathName -like '*Tentacle.exe*' | Select-Object Name, State, StartName
+```
+
+Run it a second time and look for `changed=0`.
+
+### Windows settings
+
+| Variable | Default | Notes |
+|---|---|---|
+| `tentacle_user` | `octopus` | A local account name, `DOMAIN\user`, or a gMSA (`DOMAIN\name$`). Set `tentacle_create_user: false` for domain accounts and gMSAs. |
+| `tentacle_windows_service_password` | (required) | Not needed for a gMSA. After changing it, run once with `tentacle_windows_service_password_changed: true`. |
+| `tentacle_windows_flavour` | `net8` | `net8` or `netfx`. |
+| `tentacle_windows_version` | `12.3.4629` | Or `latest`. |
+| `tentacle_windows_msi_url` | empty | An internal mirror URL. |
+| `tentacle_windows_msi_local_path` | empty | Push an MSI from the controller. |
+| `tentacle_windows_instance_name` | `Tentacle` | Use a different name to add an instance next to an existing one. |
+| `tentacle_windows_allow_shared_upgrade` | `false` | Allow the role to upgrade Tentacle binaries that other instances also use. |
+| `tentacle_windows_home_dir` | `C:\Octopus` | |
+| `tentacle_windows_install_dir` | `C:\Program Files\Octopus Deploy\Tentacle` | |
+| `tentacle_manage_firewall` | `false` | Adds an inbound Windows Firewall rule for the port. |
+| `tentacle_windows_install_pwsh` | `false` | Installs PowerShell 7. |
+
 ## How reruns and upgrades behave
 
 - **Version.** When you pin a version, the role runs `Tentacle version` and reinstalls if it doesn't match. It stops the service first and restarts it afterwards. With `latest`, the role only installs when Tentacle is missing and never upgrades on its own, so pin a version if you want Ansible to control upgrades.
@@ -185,6 +301,9 @@ If you're not sure which to use, ask whoever manages DNS which of these the Octo
 - **RHEL 7** with ansible-core 2.16 from macOS: a full install, registration as a deployment target and a green health check in Octopus. A rerun with a changed public hostname re-registered the existing machine in place. That host had no working package repos, so it used the `chcon` fallback for SELinux.
 - **RHEL 8, 9 and 10** with ansible-core 2.16 from macOS: a full install of Tentacle `latest` (12.2.4560 at the time), registration as a deployment target and a green health check in Octopus. SELinux used the persistent `semanage` rule. A second run reported `changed=0` on each.
 - A local test run against a mock Tentacle binary covered the logic paths: version mismatch, a failed registration, worker registration, every public hostname source and the preflight checks.
+- **Windows Server 2019** (domain member) with ansible-core 2.16 from macOS over WinRM: both the `net8` and `netfx` builds, including an in-place upgrade from Tentacle 9.2.4285 to 12.3.4629. The service runs as the local non-admin `.\octopus` account, and the Octopus health check reports `Local Administrator: False`. Registration as a deployment target, a green health check, and `changed=0` on a second run, for each build.
+- **Windows Server 2025** (domain member) with ansible-core 2.16 from macOS over WinRM: a new instance added next to two existing ones (a listening and a polling instance) that share Tentacle 12.2.4530. The role found the other instances, refused to upgrade the shared binaries until the version was pinned, then created the new instance with its own home folder, port and machine name without touching the others, which still passed their own health checks afterwards. The firewall step added a rule for the new port. The new instance runs as the local non-admin `.\octopus` account, the Octopus health check passed, and a second run reported `changed=0`.
+- **Windows Server 2016 and 2022** and the PowerShell 7 option haven't been tested on real hosts yet.
 
 ## Support
 

@@ -9,3 +9,6 @@ _tentacle_semanage_package:
   "8": policycoreutils-python-utils
   "9": policycoreutils-python-utils
   "10": policycoreutils-python-utils
+# A single backslash, so Windows paths and DOMAIN\user names can be built
+# without backslash escapes inside Jinja expressions.
+_tentacle_bs: '\'

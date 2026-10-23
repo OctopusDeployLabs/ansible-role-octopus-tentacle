@@ -1,0 +1,86 @@
+---
+- name: Look up the Tentacle service
+  ansible.builtin.import_tasks: lookup_service.yml
+
+- name: Install the Tentacle service
+  ansible.windows.win_command:
+    argv: "{{ [_tentacle_win_exe, 'service', '--install'] + _tentacle_win_instance_args }}"
+  when: _tentacle_win_service_name | length == 0
+
+- name: Look up the new service
+  ansible.builtin.include_tasks: lookup_service.yml
+  when: _tentacle_win_service_name | length == 0
+
+- name: Check the service exists
+  ansible.builtin.assert:
+    that: _tentacle_win_service_name | length > 0
+    fail_msg: Could not find the Windows service for Tentacle instance {{ tentacle_windows_instance_name }}.
+    quiet: true
+
+# Set the account only when it differs, so reruns report no change. Set
+# tentacle_windows_service_password_changed to true for one run after rotating
+# the password.
+- name: Run the service as the Tentacle account
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$Name, [string]$Account, [bool]$Force, [SecureString]$Password)
+      $Ansible.Changed = $false
+      function Get-Sid([string]$n) {
+          $n = $n -replace '^\.\\', "$env:COMPUTERNAME\"
+          try { ([System.Security.Principal.NTAccount]$n).Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { $null }
+      }
+      $svc = Get-CimInstance Win32_Service -Filter "Name='$Name'"
+      $wanted = Get-Sid $Account
+      if (-not $wanted) { throw "Could not resolve account $Account" }
+      if ((Get-Sid $svc.StartName) -eq $wanted -and -not $Force) { return }
+      $plain = if ($Password) { [System.Net.NetworkCredential]::new('', $Password).Password } else { '' }
+      $result = Invoke-CimMethod -InputObject $svc -MethodName Change -Arguments @{ StartName = $Account; StartPassword = $plain }
+      if ($result.ReturnValue -ne 0) { throw "Win32_Service.Change returned $($result.ReturnValue)" }
+      $Ansible.Changed = $true
+    parameters:
+      Name: "{{ _tentacle_win_service_name }}"
+      Account: "{{ _tentacle_win_account }}"
+      Force: "{{ tentacle_windows_service_password_changed | default(false) | bool }}"
+    sensitive_parameters: >-
+      {{ [{'name': 'Password', 'value': tentacle_windows_service_password}]
+         if tentacle_windows_service_password | length > 0 else [] }}
+  notify: Restart tentacle windows
+
+# Lets the account start, stop and query its own service.
+- name: Allow the account to manage its own service
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$Name, [string]$Account)
+      $Ansible.Changed = $false
+      $n = $Account -replace '^\.\\', "$env:COMPUTERNAME\"
+      $sid = ([System.Security.Principal.NTAccount]$n).Translate([System.Security.Principal.SecurityIdentifier]).Value
+      $sddl = (& sc.exe sdshow $Name | Where-Object { $_ -match '\S' }) -join ''
+      if ($sddl -match [regex]::Escape(";;;$sid)")) { return }
+      $ace = "(A;;RPWPDTLOCRRC;;;$sid)"
+      $new = if ($sddl -match 'S:') { $sddl -replace 'S:', "${ace}S:" } else { $sddl + $ace }
+      $out = & sc.exe sdset $Name $new
+      if ($LASTEXITCODE -ne 0) { throw "sc.exe sdset failed: $out" }
+      $Ansible.Changed = $true
+    parameters:
+      Name: "{{ _tentacle_win_service_name }}"
+      Account: "{{ _tentacle_win_account }}"
+
+- name: Start Tentacle and start it on boot
+  ansible.windows.win_service:
+    name: "{{ _tentacle_win_service_name }}"
+    start_mode: auto
+    state: started
+
+- name: Wait for Tentacle to listen
+  ansible.windows.win_wait_for:
+    port: "{{ tentacle_listen_port }}"
+    timeout: 60
+
+- name: Read the service state
+  ansible.builtin.import_tasks: lookup_service.yml
+
+- name: Report the service state
+  ansible.builtin.debug:
+    msg: >-
+      {{ _tentacle_win_service.Name }}: State={{ _tentacle_win_service.State }},
+      StartMode={{ _tentacle_win_service.StartMode }}, Account={{ _tentacle_win_service.StartName }}

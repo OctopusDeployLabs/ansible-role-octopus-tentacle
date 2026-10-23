@@ -1,0 +1,21 @@
+---
+- name: Check the server thumbprint is set
+  ansible.builtin.assert:
+    that: tentacle_server_thumbprint | length > 0
+    fail_msg: Set tentacle_server_thumbprint. A listening Tentacle needs it to trust your Octopus Server.
+    quiet: true
+
+- name: Check registration settings
+  ansible.builtin.assert:
+    that:
+      - tentacle_registration_type in ["target", "worker"]
+      - tentacle_registration_type != "target" or tentacle_environments | length > 0
+      - tentacle_registration_type != "target" or tentacle_roles | length > 0
+      - tentacle_registration_type != "worker" or tentacle_worker_pools | length > 0
+    fail_msg: >-
+      A deployment target needs at least one tentacle_environments entry and one
+      tentacle_roles entry. A worker needs at least one tentacle_worker_pools entry.
+    quiet: true
+  when: _tentacle_do_register | bool
+  vars:
+    _tentacle_do_register: "{{ tentacle_register | bool and tentacle_server_url | length > 0 and tentacle_api_key | length > 0 }}"

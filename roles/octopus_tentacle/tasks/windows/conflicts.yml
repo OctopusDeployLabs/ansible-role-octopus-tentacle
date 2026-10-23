@@ -1,0 +1,45 @@
+---
+# Look for other Tentacle instances on this host, and anything else already
+# listening on the port this instance will use.
+- name: Look for other Tentacle instances and port use
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$Instance, [int]$Port)
+      $Ansible.Changed = $false
+      $pattern = '[-/]instance[= ]"?' + [regex]::Escape($Instance) + '"?(\s|$)'
+      $all = @(Get-CimInstance Win32_Service | Where-Object { $_.PathName -like '*Tentacle.exe*' })
+      $mine = @($all | Where-Object { $_.PathName -match $pattern })
+      $others = @($all | Where-Object { $_.PathName -notmatch $pattern } | ForEach-Object { $_.Name })
+      $myPids = @($mine | ForEach-Object { [int]$_.ProcessId } | Where-Object { $_ -gt 0 })
+      $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+          ForEach-Object { [int]$_.OwningProcess } | Sort-Object -Unique)
+      $foreign = @($listeners | Where-Object { $myPids -notcontains $_ } | ForEach-Object {
+          $p = Get-Process -Id $_ -ErrorAction SilentlyContinue
+          if ($p) { "$($p.ProcessName) (PID $_)" } else { "PID $_" }
+      })
+      [pscustomobject]@{ Others = $others; PortUsedBy = $foreign }
+    parameters:
+      Instance: "{{ tentacle_windows_instance_name }}"
+      Port: "{{ tentacle_listen_port }}"
+  register: _tentacle_win_conflicts
+
+- name: Record other instances
+  ansible.builtin.set_fact:
+    _tentacle_win_other_instances: "{{ (_tentacle_win_conflicts.output | first).Others | default([]) }}"
+    _tentacle_win_port_users: "{{ (_tentacle_win_conflicts.output | first).PortUsedBy | default([]) }}"
+
+- name: Show other Tentacle instances on this host
+  ansible.builtin.debug:
+    msg: >-
+      Other Tentacle services on this host: {{ _tentacle_win_other_instances | join(', ') }}.
+      They share the Tentacle binaries. Give this instance its own
+      tentacle_windows_home_dir, tentacle_listen_port and tentacle_machine_name.
+  when: _tentacle_win_other_instances | length > 0
+
+- name: Check nothing else is listening on the port
+  ansible.builtin.assert:
+    that: _tentacle_win_port_users | length == 0
+    fail_msg: >-
+      Port {{ tentacle_listen_port }} is already in use by {{ _tentacle_win_port_users | join(', ') }}.
+      Pick another tentacle_listen_port for this instance.
+    quiet: true

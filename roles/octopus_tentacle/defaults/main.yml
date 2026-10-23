@@ -106,3 +106,47 @@ tentacle_manage_selinux: true
 tentacle_manage_firewall: false
 tentacle_manage_service: true
 tentacle_service_name: "octopus-tentacle-{{ tentacle_instance_name }}"
+
+# ---------------------------------------------------------------------------
+# Windows hosts. Shared settings above (tentacle_user, tentacle_create_user,
+# tentacle_listen_port, tentacle_server_thumbprint, registration and public
+# hostname settings) apply to Windows too. The settings below are Windows only.
+# ---------------------------------------------------------------------------
+# Password for tentacle_user. Required for a local account (created by the
+# role) or a domain account. Leave empty for a gMSA ("DOMAIN\name$").
+tentacle_windows_service_password: ""
+# Set to true for one run after changing the password, to push it to the service.
+tentacle_windows_service_password_changed: false
+
+# Tentacle build: "net8" (.NET 8, no .NET Framework needed) or "netfx"
+# (.NET Framework build, needs .NET Framework 4.8). When Octopus ships a build
+# for a newer .NET, add it to tentacle_windows_msi_url_templates (for example
+# a "net10" key) and set this to its name. The role treats every modern .NET
+# build as one family, so moving from net8 to a newer one is a normal upgrade.
+tentacle_windows_flavour: net8
+# Pin a version so Ansible can manage upgrades. "latest" uses the Octopus
+# permalink and only installs when Tentacle is missing.
+tentacle_windows_version: "12.3.4629"
+tentacle_windows_msi_url_templates:
+  net8: "https://download.octopusdeploy.com/octopus/Octopus.Tentacle.{version}-net8.0-windows-win-x64.msi"
+  netfx: "https://download.octopusdeploy.com/octopus/Octopus.Tentacle.{version}-x64.msi"
+tentacle_windows_msi_url_latest: "https://octopus.com/downloads/latest/WindowsX64/OctopusTentacle"
+# Full URL to an internal mirror, or a path to an MSI on the controller.
+tentacle_windows_msi_url: ""
+tentacle_windows_msi_local_path: ""
+tentacle_windows_force_reinstall: false
+# Tentacle binaries are shared by every instance on a host. When other
+# instances exist, the role won't install a different version unless this is true.
+tentacle_windows_allow_shared_upgrade: false
+
+tentacle_windows_instance_name: Tentacle
+tentacle_windows_install_dir: 'C:\Program Files\Octopus Deploy\Tentacle'
+tentacle_windows_home_dir: 'C:\Octopus'
+# Empty means <home>\Applications
+tentacle_windows_app_dir: ""
+tentacle_windows_firewall_rule_name: "Octopus Deploy Tentacle ({{ tentacle_windows_instance_name }})"
+
+# Optional: install PowerShell 7 so Octopus steps can use it. Ansible itself
+# always manages Windows through the built-in Windows PowerShell 5.1.
+tentacle_windows_install_pwsh: false
+tentacle_windows_pwsh_msi_url: "https://github.com/PowerShell/PowerShell/releases/download/v7.4.6/PowerShell-7.4.6-win-x64.msi"

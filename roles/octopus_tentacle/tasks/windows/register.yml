@@ -1,0 +1,35 @@
+---
+- name: Shared registration settings
+  ansible.builtin.import_tasks: "{{ role_path }}/tasks/register_common.yml"
+
+- name: Register with Octopus Server
+  when: _tentacle_do_register | bool
+  block:
+    - name: Run the registration
+      ansible.windows.win_command:
+        argv: "{{ [_tentacle_win_exe] + _tentacle_register_args + _tentacle_win_instance_args + ['--apiKey=' ~ tentacle_api_key] }}"
+      no_log: true
+      changed_when: true
+      failed_when: false
+      register: _tentacle_register_result
+      when: >-
+        tentacle_force_register | bool
+        or (_tentacle_register_stamp_content.content | default('') | b64decode | trim)
+           != (_tentacle_register_args | to_json | hash('sha1'))
+      notify: Restart tentacle windows
+
+    # no_log above hides the API key; this shows Tentacle's output on failure.
+    - name: Fail if registration failed
+      ansible.builtin.fail:
+        msg: "{{ (_tentacle_register_result.stdout | default('')) ~ '\n' ~ (_tentacle_register_result.stderr | default('')) }}"
+      when:
+        - _tentacle_register_result is not skipped
+        - _tentacle_register_result.rc | default(0) != 0
+
+    - name: Store the registration fingerprint
+      ansible.windows.win_copy:
+        content: "{{ _tentacle_register_args | to_json | hash('sha1') }}\n"
+        dest: "{{ _tentacle_register_stamp }}"
+      when:
+        - _tentacle_register_result is not skipped
+        - _tentacle_register_result.rc | default(1) == 0

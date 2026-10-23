@@ -1,0 +1,15 @@
+---
+- name: Allow the listening port through Windows Firewall
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$Name, [int]$Port)
+      $rule = Get-NetFirewallRule -DisplayName $Name -ErrorAction SilentlyContinue
+      if ($rule) {
+          $Ansible.Changed = $false
+      } else {
+          New-NetFirewallRule -DisplayName $Name -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow | Out-Null
+          $Ansible.Changed = $true
+      }
+    parameters:
+      Name: "{{ tentacle_windows_firewall_rule_name }}"
+      Port: "{{ tentacle_listen_port }}"

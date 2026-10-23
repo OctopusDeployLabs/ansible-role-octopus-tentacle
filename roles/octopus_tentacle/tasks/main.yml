@@ -1,30 +1,8 @@
 ---
-- name: Install and configure Octopus Tentacle
-  become: true
-  block:
-    - name: Preflight checks and derived settings
-      ansible.builtin.import_tasks: preflight.yml
+- name: Linux hosts
+  ansible.builtin.include_tasks: linux.yml
+  when: ansible_os_family != "Windows"
 
-    - name: Service user and directories
-      ansible.builtin.import_tasks: user.yml
-
-    - name: Tentacle binaries
-      ansible.builtin.import_tasks: install.yml
-
-    - name: SELinux labels
-      ansible.builtin.import_tasks: selinux.yml
-      when: tentacle_manage_selinux | bool
-
-    - name: Rootless Tentacle instance
-      ansible.builtin.import_tasks: configure.yml
-
-    - name: Registration with Octopus Server
-      ansible.builtin.import_tasks: register.yml
-
-    - name: Firewall
-      ansible.builtin.import_tasks: firewall.yml
-      when: tentacle_manage_firewall | bool
-
-    - name: Systemd service
-      ansible.builtin.import_tasks: service.yml
-      when: tentacle_manage_service | bool
+- name: Windows hosts
+  ansible.builtin.include_tasks: windows.yml
+  when: ansible_os_family == "Windows"

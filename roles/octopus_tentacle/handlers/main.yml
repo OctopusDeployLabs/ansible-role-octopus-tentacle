@@ -5,12 +5,32 @@
     state: restarted
     daemon_reload: true
   become: true
-  when: tentacle_manage_service | bool
+  when:
+    - ansible_os_family != "Windows"
+    - tentacle_manage_service | bool
   listen: Restart tentacle
 
 - name: Wait for tentacle after restart
   ansible.builtin.wait_for:
     port: "{{ tentacle_listen_port }}"
     timeout: 60
-  when: tentacle_manage_service | bool
+  when:
+    - ansible_os_family != "Windows"
+    - tentacle_manage_service | bool
   listen: Restart tentacle
+
+- name: Restart tentacle on Windows
+  ansible.windows.win_service:
+    name: "{{ _tentacle_win_service_name }}"
+    state: restarted
+  when:
+    - ansible_os_family == "Windows"
+    - _tentacle_win_service_name | default('') | length > 0
+  listen: Restart tentacle windows
+
+- name: Wait for tentacle on Windows after restart
+  ansible.windows.win_wait_for:
+    port: "{{ tentacle_listen_port }}"
+    timeout: 60
+  when: ansible_os_family == "Windows"
+  listen: Restart tentacle windows

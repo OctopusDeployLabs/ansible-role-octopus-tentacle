@@ -1,0 +1,6 @@
+---
+# Needed for Windows hosts. AAP installs these automatically from this file.
+# From a laptop: ansible-galaxy collection install -r collections/requirements.yml
+collections:
+  - name: ansible.windows
+    version: ">=2.5.0"

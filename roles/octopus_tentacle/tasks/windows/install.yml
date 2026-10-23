@@ -1,0 +1,126 @@
+---
+- name: Check for an existing Tentacle.exe
+  ansible.windows.win_stat:
+    path: "{{ _tentacle_win_exe }}"
+  register: _tentacle_win_exe_stat
+
+# The modern .NET builds (net8 today, later ones in future) ship their own
+# runtime, including coreclr.dll. The .NET Framework build doesn't.
+- name: Check which Tentacle build is installed
+  ansible.windows.win_stat:
+    path: '{{ tentacle_windows_install_dir }}\coreclr.dll'
+  register: _tentacle_win_coreclr
+  when: _tentacle_win_exe_stat.stat.exists
+
+- name: Read the installed Tentacle version
+  ansible.windows.win_command:
+    argv: ["{{ _tentacle_win_exe }}", version]
+  register: _tentacle_win_installed_version
+  changed_when: false
+  failed_when: false
+  when: _tentacle_win_exe_stat.stat.exists
+
+- name: Decide whether to install
+  ansible.builtin.set_fact:
+    _tentacle_win_install_required: >-
+      {{ (not _tentacle_win_exe_stat.stat.exists)
+         or (tentacle_windows_force_reinstall | bool)
+         or (_tentacle_version != 'latest'
+             and _tentacle_version not in (_tentacle_win_installed_version.stdout | default(''))) }}
+    _tentacle_win_msi: '{{ _tentacle_win_download_dir }}\Octopus.Tentacle.{{ _tentacle_version }}-{{ tentacle_windows_flavour }}-x64.msi'
+    _tentacle_win_url: >-
+      {{ tentacle_windows_msi_url if tentacle_windows_msi_url | length > 0
+         else (tentacle_windows_msi_url_latest if _tentacle_version == 'latest'
+               else tentacle_windows_msi_url_templates[tentacle_windows_flavour] | replace('{version}', _tentacle_version)) }}
+
+- name: Work out the installed and wanted build families
+  ansible.builtin.set_fact:
+    _tentacle_win_wanted_family: "{{ 'netfx' if tentacle_windows_flavour == 'netfx' else 'dotnet' }}"
+    _tentacle_win_installed_family: >-
+      {{ ('dotnet' if _tentacle_win_coreclr.stat.exists else 'netfx')
+         if _tentacle_win_exe_stat.stat.exists else 'none' }}
+
+- name: Stop if the installed build doesn't match the one asked for
+  ansible.builtin.assert:
+    that: _tentacle_win_installed_family in ['none', _tentacle_win_wanted_family]
+    fail_msg: >-
+      This host has the {{ 'modern .NET' if _tentacle_win_installed_family == 'dotnet' else '.NET Framework' }}
+      build of Tentacle, but tentacle_windows_flavour is {{ tentacle_windows_flavour }}.
+      Set tentacle_windows_flavour to match ({{ 'net8' if _tentacle_win_installed_family == 'dotnet' else 'netfx' }}),
+      or uninstall the Tentacle program first to switch builds. The README explains how.
+    quiet: true
+
+- name: Refuse to change Tentacle binaries that other instances share
+  ansible.builtin.assert:
+    that: >-
+      not (_tentacle_win_install_required | bool)
+      or not _tentacle_win_exe_stat.stat.exists
+      or _tentacle_win_other_instances | length == 0
+      or tentacle_windows_allow_shared_upgrade | bool
+    fail_msg: >-
+      Tentacle {{ (_tentacle_win_installed_version.stdout | default('')) | trim }} on this host is also used by
+      {{ _tentacle_win_other_instances | join(', ') }}. Installing {{ _tentacle_version }} ({{ tentacle_windows_flavour }})
+      would change it for those instances too. Set tentacle_windows_version to
+      {{ (_tentacle_win_installed_version.stdout | default('')) | trim }} to leave them alone, or set
+      tentacle_windows_allow_shared_upgrade to true to upgrade all instances.
+    quiet: true
+
+- name: Show install decision
+  ansible.builtin.debug:
+    msg: >-
+      Installed: {{ (_tentacle_win_installed_version.stdout | default('none')) | trim }}.
+      Wanted: {{ _tentacle_version }} ({{ tentacle_windows_flavour }}).
+      {{ 'Installing.' if _tentacle_win_install_required | bool else 'Nothing to do.' }}
+
+- name: Install or upgrade Tentacle
+  when: _tentacle_win_install_required | bool
+  block:
+    - name: Create the download folder
+      ansible.windows.win_file:
+        path: "{{ _tentacle_win_download_dir }}"
+        state: directory
+
+    - name: Download the Tentacle MSI
+      ansible.windows.win_get_url:
+        url: "{{ _tentacle_win_url | trim }}"
+        dest: "{{ _tentacle_win_msi }}"
+        force: "{{ _tentacle_version == 'latest' }}"
+      when: tentacle_windows_msi_local_path | length == 0
+
+    - name: Copy the Tentacle MSI from the controller
+      ansible.windows.win_copy:
+        src: "{{ tentacle_windows_msi_local_path }}"
+        dest: "{{ _tentacle_win_msi }}"
+      when: tentacle_windows_msi_local_path | length > 0
+
+    - name: Look up an existing service before upgrading
+      ansible.builtin.import_tasks: lookup_service.yml
+
+    - name: Stop Tentacle before upgrading
+      ansible.windows.win_service:
+        name: "{{ _tentacle_win_service_name }}"
+        state: stopped
+      when: _tentacle_win_service_name | length > 0
+
+    - name: Install the Tentacle MSI
+      ansible.windows.win_package:
+        path: "{{ _tentacle_win_msi }}"
+        arguments: 'INSTALLLOCATION="{{ tentacle_windows_install_dir }}"'
+        state: present
+      notify: Restart tentacle windows
+
+    - name: Confirm the new Tentacle.exe runs
+      ansible.windows.win_command:
+        argv: ["{{ _tentacle_win_exe }}", version]
+      register: _tentacle_win_new_version
+      changed_when: false
+
+    - name: Check the expected version is now installed
+      ansible.builtin.assert:
+        that: _tentacle_version == 'latest' or _tentacle_version in _tentacle_win_new_version.stdout
+        fail_msg: "Wanted Tentacle {{ _tentacle_version }} but Tentacle.exe reports {{ _tentacle_win_new_version.stdout | trim }}."
+        quiet: true
+
+    - name: Show the installed version
+      ansible.builtin.debug:
+        msg: "Tentacle {{ _tentacle_win_new_version.stdout | trim }} installed in {{ tentacle_windows_install_dir }}"

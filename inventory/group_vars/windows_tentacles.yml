@@ -1,0 +1,19 @@
+---
+# How Ansible connects to Windows. WinRM over HTTP with NTLM is the quickest
+# way to test (pywinrm encrypts the traffic). Use HTTPS (port 5986) or
+# Kerberos in production.
+ansible_connection: winrm
+ansible_port: 5985
+ansible_winrm_scheme: http
+ansible_winrm_transport: ntlm
+# ansible_winrm_server_cert_validation: ignore   # only for HTTPS with a self-signed certificate
+
+# Or use OpenSSH instead of WinRM:
+# ansible_connection: ssh
+# ansible_shell_type: powershell
+
+# The Tentacle service account (a local, non-admin user the role creates).
+# Pass the password on the command line rather than storing it here:
+#   -e tentacle_windows_service_password='...'
+tentacle_user: octopus
+tentacle_windows_service_password: ""

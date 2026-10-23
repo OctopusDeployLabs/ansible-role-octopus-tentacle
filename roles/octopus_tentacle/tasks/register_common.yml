@@ -1,0 +1,89 @@
+---
+- name: Decide whether to register
+  ansible.builtin.set_fact:
+    _tentacle_do_register: "{{ tentacle_register | bool and tentacle_server_url | length > 0 and tentacle_api_key | length > 0 }}"
+
+- name: Note that registration is skipped
+  ansible.builtin.debug:
+    msg: Registration skipped. Set tentacle_server_url and tentacle_api_key to register this Tentacle.
+  when: not _tentacle_do_register | bool
+
+- name: Check the address source is valid
+  ansible.builtin.assert:
+    that: tentacle_public_hostname_source in ['auto', 'fqdn', 'hostname', 'inventory', 'ansible_host', 'ip']
+    fail_msg: "tentacle_public_hostname_source must be auto, fqdn, hostname, inventory, ansible_host or ip."
+    quiet: true
+
+- name: Work out the address Octopus will use to reach this machine
+  ansible.builtin.set_fact:
+    _tentacle_public_address: >-
+      {%- set src = tentacle_public_hostname_source -%}
+      {%- if tentacle_public_hostname | length > 0 -%}{{ tentacle_public_hostname }}
+      {%- elif src == 'fqdn' -%}{{ ansible_fqdn }}
+      {%- elif src == 'hostname' -%}{{ ansible_hostname ~ tentacle_public_hostname_suffix }}
+      {%- elif src == 'inventory' -%}{{ inventory_hostname ~ tentacle_public_hostname_suffix }}
+      {%- elif src == 'ansible_host' -%}{{ ansible_host | default(inventory_hostname) }}
+      {%- elif src == 'ip' -%}{{ _ip }}
+      {%- elif '.' in ansible_fqdn -%}{{ ansible_fqdn }}
+      {%- else -%}{{ _ip }}
+      {%- endif -%}
+  vars:
+    _ip_candidates: >-
+      {{ ((ansible_all_ipv4_addresses | default([])) + (ansible_ip_addresses | default([])))
+         | select('match', '^[0-9]+([.][0-9]+){3}$')
+         | reject('match', '^(127[.]|169[.]254[.])')
+         | list }}
+    _ip: >-
+      {{ (ansible_default_ipv4 | default({})).address
+         | default((_ip_candidates + ['']) | first) }}
+
+- name: Check an address was found
+  ansible.builtin.assert:
+    that: _tentacle_public_address | trim | length > 0
+    fail_msg: >-
+      Could not work out an address for this machine using source
+      '{{ tentacle_public_hostname_source }}'. Set tentacle_public_hostname for this host.
+    quiet: true
+
+- name: Show the address Octopus will use
+  ansible.builtin.debug:
+    msg: >-
+      Octopus will connect to {{ _tentacle_public_address | trim }}:{{ tentacle_listen_port }}.
+      Check the Octopus Server can resolve and reach this address.
+
+- name: Register with Octopus Server
+  when: _tentacle_do_register | bool
+  vars:
+    _is_target: "{{ tentacle_registration_type == 'target' }}"
+  block:
+    - name: Build the registration command
+      ansible.builtin.set_fact:
+        _tentacle_register_args: >-
+          {{ [('register-with' if _is_target | bool else 'register-worker'),
+              '--server=' ~ tentacle_server_url,
+              '--space=' ~ tentacle_space,
+              '--name=' ~ tentacle_machine_name,
+              '--publicHostName=' ~ (_tentacle_public_address | trim),
+              '--comms-style=TentaclePassive',
+              '--force']
+             + ((tentacle_environments | map('regex_replace', '^', '--env=') | list) if _is_target | bool else [])
+             + ((tentacle_roles | map('regex_replace', '^', '--role=') | list) if _is_target | bool else [])
+             + ((tentacle_tenants | map('regex_replace', '^', '--tenant=') | list) if _is_target | bool else [])
+             + ((tentacle_tenant_tags | map('regex_replace', '^', '--tenanttag=') | list) if _is_target | bool else [])
+             + (['--tenanted-deployment-participation=' ~ tentacle_tenanted_deployment_participation]
+                if (_is_target | bool and tentacle_tenanted_deployment_participation | length > 0) else [])
+             + ((tentacle_worker_pools | map('regex_replace', '^', '--workerpool=') | list) if not _is_target | bool else [])
+             + (['--policy=' ~ tentacle_machine_policy] if tentacle_machine_policy | length > 0 else []) }}
+        _tentacle_register_stamp: "{{ _tentacle_instance_dir }}{{ _tentacle_path_sep | default('/') }}.ansible-registration-fingerprint"
+
+    # The API key is not part of the fingerprint, so rotating the key does not
+    # trigger a re-registration.
+    - name: Read the stored registration fingerprint
+      ansible.builtin.slurp:
+        src: "{{ _tentacle_register_stamp }}"
+      register: _tentacle_register_stamp_content
+      failed_when: false
+
+    - name: Show what will be registered
+      ansible.builtin.debug:
+        msg: "Tentacle {{ _tentacle_register_args | join(' ') }} --apiKey=********"

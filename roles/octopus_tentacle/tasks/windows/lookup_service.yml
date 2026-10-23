@@ -1,0 +1,26 @@
+---
+# Tentacle names its Windows service after the instance. Rather than guess the
+# name, find the service whose command line runs this instance.
+- name: Find the Tentacle service for this instance
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$Instance)
+      $Ansible.Changed = $false
+      $pattern = '[-/]instance[= ]"?' + [regex]::Escape($Instance) + '"?(\s|$)'
+      $all = @(Get-CimInstance Win32_Service | Where-Object { $_.PathName -like '*Tentacle.exe*' })
+      $svc = $all | Where-Object { $_.PathName -match $pattern } | Select-Object -First 1
+      if (-not $svc) {
+          $expected = if ($Instance -eq 'Tentacle') { 'OctopusDeploy Tentacle' } else { "OctopusDeploy Tentacle: $Instance" }
+          $svc = $all | Where-Object { $_.Name -eq $expected } | Select-Object -First 1
+      }
+      if ($svc) {
+          [pscustomobject]@{ Name = $svc.Name; StartName = $svc.StartName; State = $svc.State; StartMode = $svc.StartMode }
+      }
+    parameters:
+      Instance: "{{ tentacle_windows_instance_name }}"
+  register: _tentacle_win_service_lookup
+
+- name: Record the service name
+  ansible.builtin.set_fact:
+    _tentacle_win_service: "{{ _tentacle_win_service_lookup.output | default([]) | first | default({}) }}"
+    _tentacle_win_service_name: "{{ (_tentacle_win_service_lookup.output | default([]) | first | default({})).Name | default('') }}"

@@ -1,0 +1,79 @@
+---
+- name: Create the home and application folders
+  ansible.windows.win_file:
+    path: "{{ item }}"
+    state: directory
+  loop:
+    - "{{ tentacle_windows_home_dir }}"
+    - "{{ _tentacle_win_app_dir }}"
+
+# A Tentacle.config left behind by an earlier install doesn't mean the
+# instance is registered, so ask Tentacle itself rather than checking the file.
+- name: Check whether the instance is registered
+  ansible.windows.win_command:
+    argv: "{{ [_tentacle_win_exe, 'show-thumbprint', '--nologo'] + _tentacle_win_instance_args }}"
+  register: _tentacle_win_instance_probe
+  changed_when: false
+  failed_when: false
+
+- name: Create the Tentacle instance
+  ansible.windows.win_command:
+    argv: "{{ [_tentacle_win_exe, 'create-instance', '--config=' ~ _tentacle_win_config] + _tentacle_win_instance_args }}"
+  when: >-
+    _tentacle_win_instance_probe.rc != 0
+    and 'has not been configured' in (_tentacle_win_instance_probe.stderr ~ _tentacle_win_instance_probe.stdout)
+  notify: Restart tentacle windows
+
+- name: Generate a certificate if there is none
+  ansible.windows.win_command:
+    argv: "{{ [_tentacle_win_exe, 'new-certificate', '--if-blank'] + _tentacle_win_instance_args }}"
+  changed_when: false
+
+# The configure commands are not idempotent on their own (--reset-trust wipes
+# trust), so the role stores a fingerprint of the settings and only reruns
+# them when something changes.
+- name: Build the configuration fingerprint
+  ansible.builtin.set_fact:
+    _tentacle_config_fingerprint: >-
+      {{ {'port': tentacle_listen_port | string,
+          'home': tentacle_windows_home_dir,
+          'app': _tentacle_win_app_dir,
+          'thumbprint': tentacle_server_thumbprint | upper} | to_json | hash('sha1') }}
+    _tentacle_config_stamp: '{{ tentacle_windows_home_dir }}\.ansible-config-fingerprint'
+
+- name: Read the stored fingerprint
+  ansible.builtin.slurp:
+    src: "{{ _tentacle_config_stamp }}"
+  register: _tentacle_config_stamp_content
+  failed_when: false
+
+- name: Apply home, port, application path and trust
+  when: (_tentacle_config_stamp_content.content | default('') | b64decode | trim) != _tentacle_config_fingerprint
+  block:
+    - name: Reset trust
+      ansible.windows.win_command:
+        argv: "{{ [_tentacle_win_exe, 'configure', '--reset-trust'] + _tentacle_win_instance_args }}"
+      changed_when: true
+      notify: Restart tentacle windows
+
+    - name: Configure home, application folder and listening port
+      ansible.windows.win_command:
+        argv: >-
+          {{ [_tentacle_win_exe, 'configure',
+              '--home=' ~ tentacle_windows_home_dir,
+              '--app=' ~ _tentacle_win_app_dir,
+              '--port=' ~ (tentacle_listen_port | string),
+              '--noListen=False'] + _tentacle_win_instance_args }}
+      changed_when: true
+      notify: Restart tentacle windows
+
+    - name: Trust the Octopus Server
+      ansible.windows.win_command:
+        argv: "{{ [_tentacle_win_exe, 'configure', '--trust=' ~ tentacle_server_thumbprint] + _tentacle_win_instance_args }}"
+      changed_when: true
+      notify: Restart tentacle windows
+
+    - name: Store the fingerprint
+      ansible.windows.win_copy:
+        content: "{{ _tentacle_config_fingerprint }}\n"
+        dest: "{{ _tentacle_config_stamp }}"

@@ -1,0 +1,6 @@
+---
+- name: Install PowerShell 7
+  ansible.windows.win_package:
+    path: "{{ tentacle_windows_pwsh_msi_url }}"
+    creates_path: 'C:\Program Files\PowerShell\7\pwsh.exe'
+    state: present

@@ -1,0 +1,90 @@
+---
+- name: Check the Windows edition and architecture
+  ansible.builtin.assert:
+    that: ansible_architecture is search('64')
+    fail_msg: "Only 64-bit Windows is supported. Found {{ ansible_architecture }}."
+    quiet: true
+
+- name: Warn about untested Windows versions
+  ansible.builtin.debug:
+    msg: >-
+      {{ ansible_distribution }} (build {{ _build }}) is older than Windows Server 2016.
+      Current ansible-core releases no longer support it, so expect problems.
+  when: (_build | int) < 14393
+  vars:
+    _build: "{{ (ansible_distribution_version | default('0.0.0')).split('.')[2] | default('0') }}"
+
+- name: Work out the service account
+  ansible.builtin.set_fact:
+    _tentacle_win_is_gmsa: "{{ tentacle_user is search('[$]$') }}"
+    _tentacle_win_is_domain: "{{ _tentacle_bs in tentacle_user }}"
+    _tentacle_win_account: "{{ tentacle_user if _tentacle_bs in tentacle_user else '.' ~ _tentacle_bs ~ tentacle_user }}"
+
+- name: Check the service account is not a built-in admin account
+  ansible.builtin.assert:
+    that: (tentacle_user.split(_tentacle_bs) | last | lower) not in ['administrator', 'system', 'localsystem', 'local system']
+    fail_msg: This role runs Tentacle as a non-admin account. Pick another tentacle_user.
+    quiet: true
+
+- name: Check the account settings make sense
+  ansible.builtin.assert:
+    that:
+      - not (tentacle_create_user | bool and _tentacle_win_is_domain | bool)
+      - _tentacle_win_is_gmsa | bool or tentacle_windows_service_password | length > 0
+    fail_msg: >-
+      The role can only create local accounts, so set tentacle_create_user to false for
+      DOMAIN\user or gMSA accounts. Every account except a gMSA needs
+      tentacle_windows_service_password.
+    quiet: true
+
+- name: Check Windows paths are absolute
+  ansible.builtin.assert:
+    that:
+      - item[1:2] == ':'
+      - item[2:3] in [_tentacle_bs, '/']
+    fail_msg: >-
+      "{{ item }}" isn't a full path like C:\Octopus. If you passed it with -e on a
+      Mac or Linux shell, quote it, for example -e 'tentacle_windows_home_dir=C:\Octopus',
+      because the shell removes unquoted backslashes.
+    quiet: true
+  loop: "{{ [tentacle_windows_home_dir, tentacle_windows_install_dir] + ([tentacle_windows_app_dir] if tentacle_windows_app_dir | length > 0 else []) }}"
+
+- name: Check the Tentacle build type
+  ansible.builtin.assert:
+    that: tentacle_windows_flavour in tentacle_windows_msi_url_templates
+    fail_msg: "tentacle_windows_flavour must be one of {{ tentacle_windows_msi_url_templates.keys() | list }}."
+    quiet: true
+
+- name: Check .NET Framework 4.8 for the .NET Framework build
+  when: tentacle_windows_flavour == 'netfx'
+  block:
+    - name: Read the installed .NET Framework release
+      ansible.windows.win_reg_stat:
+        path: 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full'
+        name: Release
+      register: _tentacle_netfx
+
+    - name: Require .NET Framework 4.8 or later
+      ansible.builtin.assert:
+        that: (_tentacle_netfx.value | default(0) | int) >= 528040
+        fail_msg: >-
+          The .NET Framework build of Tentacle needs .NET Framework 4.8 or later. Install it,
+          or set tentacle_windows_flavour to net8, which doesn't need it.
+        quiet: true
+
+- name: Shared checks
+  ansible.builtin.import_tasks: "{{ role_path }}/tasks/preflight_common.yml"
+
+- name: Work out versions and paths
+  ansible.builtin.set_fact:
+    _tentacle_version: "{{ tentacle_windows_version }}"
+    _tentacle_win_exe: '{{ tentacle_windows_install_dir }}\Tentacle.exe'
+    _tentacle_win_config: '{{ tentacle_windows_home_dir }}\Tentacle.config'
+    _tentacle_win_app_dir: >-
+      {{ tentacle_windows_app_dir if tentacle_windows_app_dir | length > 0
+         else tentacle_windows_home_dir ~ _tentacle_bs ~ 'Applications' }}
+    _tentacle_win_download_dir: '{{ tentacle_windows_home_dir }}\Downloads'
+    _tentacle_win_instance_args: ["--instance={{ tentacle_windows_instance_name }}", "--console"]
+    # Used by the shared registration tasks for their state file
+    _tentacle_instance_dir: "{{ tentacle_windows_home_dir }}"
+    _tentacle_path_sep: '\'

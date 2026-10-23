@@ -1,0 +1,35 @@
+---
+- name: Create the local service account
+  ansible.windows.win_user:
+    name: "{{ tentacle_user }}"
+    password: "{{ tentacle_windows_service_password }}"
+    update_password: on_create
+    password_never_expires: true
+    user_cannot_change_password: true
+    description: Octopus Deploy Tentacle service account
+    state: present
+  when: tentacle_create_user | bool
+
+- name: Check the service account is not a local administrator
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$Account)
+      $Ansible.Changed = $false
+      $name = $Account -replace '^\.\\', "$env:COMPUTERNAME\"
+      $sid = ([System.Security.Principal.NTAccount]$name).Translate([System.Security.Principal.SecurityIdentifier]).Value
+      try {
+          $members = Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction Stop | ForEach-Object { $_.SID.Value }
+          $members -contains $sid
+      } catch {
+          'unknown'
+      }
+    parameters:
+      Account: "{{ _tentacle_win_account }}"
+  register: _tentacle_win_admin_check
+
+- name: Warn if the service account is an administrator
+  ansible.builtin.debug:
+    msg: >-
+      {{ tentacle_user }} is a member of the local Administrators group. Tentacle will
+      work, but it won't be running with least privilege.
+  when: (_tentacle_win_admin_check.output | default([false]) | first | string | lower) == 'true'

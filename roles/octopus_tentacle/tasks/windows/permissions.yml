@@ -1,0 +1,87 @@
+---
+# Minimum rights from
+# https://octopus.com/docs/infrastructure/deployment-targets/tentacle/windows/tentacle-permissions
+# and the "Running Tentacle under a specific user account" page. The rights on
+# the service itself are set in service.yml, once the service exists.
+- name: Grant "Log on as a service"
+  ansible.windows.win_user_right:
+    name: SeServiceLogonRight
+    users: ["{{ _tentacle_win_account }}"]
+    action: add
+
+- name: Grant full control of the Tentacle home folder
+  ansible.windows.win_acl:
+    path: "{{ tentacle_windows_home_dir }}"
+    user: "{{ _tentacle_win_account }}"
+    rights: FullControl
+    type: allow
+    inherit: ContainerInherit, ObjectInherit
+    propagation: None
+    state: present
+
+- name: Grant full control of the application folder
+  ansible.windows.win_acl:
+    path: "{{ _tentacle_win_app_dir }}"
+    user: "{{ _tentacle_win_account }}"
+    rights: FullControl
+    type: allow
+    inherit: ContainerInherit, ObjectInherit
+    propagation: None
+    state: present
+  when: not (_tentacle_win_app_dir | lower).startswith(tentacle_windows_home_dir | lower)
+
+- name: Check for the Tentacle registry key
+  ansible.windows.win_reg_stat:
+    path: 'HKLM:\SOFTWARE\Octopus\Tentacle'
+  register: _tentacle_win_regkey
+
+- name: Grant read access to the Tentacle registry key
+  ansible.windows.win_acl:
+    path: 'HKLM:\SOFTWARE\Octopus\Tentacle'
+    user: "{{ _tentacle_win_account }}"
+    rights: ReadKey
+    type: allow
+    inherit: ContainerInherit
+    propagation: None
+    state: present
+  when: _tentacle_win_regkey.exists
+
+- name: Read the Tentacle certificate thumbprint
+  ansible.windows.win_command:
+    argv: "{{ [_tentacle_win_exe, 'show-thumbprint', '--nologo'] + _tentacle_win_instance_args }}"
+  register: _tentacle_win_thumbprint
+  changed_when: false
+
+# Some Tentacle versions keep the certificate in the Local Machine store.
+# When that's the case the service account needs to read its private key.
+# When the certificate lives in Tentacle.config instead, this does nothing.
+- name: Grant read access to the certificate private key, if it is in the machine store
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$Thumbprint, [string]$Account)
+      $Ansible.Changed = $false
+      $cert = Get-Item -Path "Cert:\LocalMachine\My\$Thumbprint" -ErrorAction SilentlyContinue
+      if (-not $cert -or -not $cert.HasPrivateKey) { return 'not-in-store' }
+      $name = $Account -replace '^\.\\', "$env:COMPUTERNAME\"
+      $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert)
+      if ($rsa -is [System.Security.Cryptography.RSACng]) {
+          $file = Join-Path "$env:ProgramData\Microsoft\Crypto\Keys" $rsa.Key.UniqueName
+      } else {
+          $file = Join-Path "$env:ProgramData\Microsoft\Crypto\RSA\MachineKeys" $cert.PrivateKey.CspKeyContainerInfo.UniqueKeyContainerName
+      }
+      if (-not (Test-Path $file)) { return 'key-file-not-found' }
+      $acl = Get-Acl $file
+      $sid = ([System.Security.Principal.NTAccount]$name).Translate([System.Security.Principal.SecurityIdentifier])
+      $has = $acl.Access | Where-Object {
+          try { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]) -eq $sid } catch { $false }
+      }
+      if ($has) { return 'already-granted' }
+      $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'Read', 'Allow')
+      $acl.AddAccessRule($rule)
+      Set-Acl -Path $file -AclObject $acl
+      $Ansible.Changed = $true
+      'granted'
+    parameters:
+      Thumbprint: "{{ _tentacle_win_thumbprint.stdout | regex_search('[0-9A-Fa-f]{40}') | default('', true) }}"
+      Account: "{{ _tentacle_win_account }}"
+  when: _tentacle_win_thumbprint.stdout is search('[0-9A-Fa-f]{40}')
